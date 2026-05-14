@@ -2,13 +2,6 @@ name: Docker Image Publish (editable)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'main'
-    paths-ignore:
-      - "*.md"
-  release:
-    types: [released]
 
 env:
   REGISTRY_IMAGE: embykeeper/embykeeper
