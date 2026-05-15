@@ -3,11 +3,11 @@ import io
 
 from rich.text import Text
 from loguru import logger
+from pyrogram.enums import ParseMode
 
 from embykeeper.schema import TelegramAccount
 from embykeeper.utils import show_exception
 
-from .link import Link
 from .session import ClientsSession
 
 logger = logger.bind(scheme="telenotifier", nonotify=True)
@@ -43,10 +43,8 @@ class TelegramStream(io.TextIOWrapper):
     async def send(self, message):
         async with ClientsSession([self.account]) as clients:
             async for _, tg in clients:
-                if self.instant:
-                    return await Link(tg).send_msg(message)
-                else:
-                    return await Link(tg).send_log(message)
+                await tg.send_message("me", message, parse_mode=ParseMode.DISABLED)
+                return True
             else:
                 return False
 
