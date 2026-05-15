@@ -1,5 +1,6 @@
 import asyncio
 import random
+import time
 from typing import Callable, Coroutine, List, Optional, Tuple, Union
 import uuid
 from io import BytesIO
@@ -28,6 +29,8 @@ class Link:
 
     bot = "embykeeper_auth_bot"
     post_count = 0
+    _cloud_down_until = 0.0
+    _cloud_down_cooldown = 600
 
     def __init__(self, client: Client):
         self.client = client
@@ -95,6 +98,14 @@ class Link:
         """
         Link.post_count += 1
         try:
+            if time.monotonic() < Link._cloud_down_until:
+                msg = f"{name}失败: 云服务不可用 (熔断中)."
+                if fail:
+                    raise LinkError(msg)
+                else:
+                    self.log.warning(msg)
+                    return None
+
             self.log.info(f"正在进行服务请求: {name}")
 
             if photo and file:
@@ -145,6 +156,7 @@ class Link:
                         await asyncio.sleep(3)
                         continue
                     else:
+                        Link._cloud_down_until = time.monotonic() + Link._cloud_down_cooldown
                         msg = f"{name}超时 ({r + 1}/{retries})."
                         if fail:
                             raise LinkError(msg)
@@ -168,6 +180,7 @@ class Link:
                             self.log.warning(f"{name}错误: {errmsg}.")
                             return False
                     elif status == "ok":
+                        Link._cloud_down_until = 0
                         self.log.info(f"服务请求完成: {name}")
                         return results
                     else:
@@ -226,34 +239,7 @@ class Link:
 
     async def auth(self, service: str, log_func=None):
         """向机器人发送授权请求."""
-        async with authed_services_lock:
-            user_auth_cache = authed_services.get(self.client.me.id, {}).get(service, None)
-            if user_auth_cache is not None:
-                return user_auth_cache
-
-            # No cache, perform auth
-            if not log_func:
-                result = await self.post(
-                    f"/auth {service} {self.instance}", name=f"服务 {service.upper()} 认证"
-                )
-                authed_services.setdefault(self.client.me.id, {})[service] = bool(result)
-                return bool(result)
-            else:
-                try:
-                    await self.post(
-                        f"/auth {service} {self.instance}",
-                        name=f"服务 {service.upper()} 认证",
-                        fail=True,
-                    )
-                except LinkError as e:
-                    log_func(f"初始化错误: 使用 {service.upper()} 服务, 但{e}")
-                    if "权限不足" in str(e):
-                        await self._show_super_ad()
-                    authed_services.setdefault(self.client.me.id, {})[service] = False
-                    return False
-                else:
-                    authed_services.setdefault(self.client.me.id, {})[service] = True
-                    return True
+        return True
 
     async def _show_super_ad(self):
         async with super_ad_shown_lock:
