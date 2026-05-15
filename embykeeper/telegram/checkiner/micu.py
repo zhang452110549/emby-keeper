@@ -28,12 +28,7 @@ class MICUCheckin(TemplateACheckin):
             f"has_markup={bool(message.reply_markup)}, edit_date={message.edit_date}[/]"
         )
         if text and message.reply_markup:
-            norm = (
-                text.replace("×", "*")
-                .replace("÷", "/")
-                .replace("−", "-")
-                .replace("－", "-")
-            )
+            norm = text.replace("×", "*").replace("÷", "/").replace("−", "-").replace("－", "-")
             if re.search(r"\d+\s*[-+*/]\s*\d+\s*[=＝]\s*[?？]", norm):
                 await self.on_math_captcha(message, norm)
                 return
