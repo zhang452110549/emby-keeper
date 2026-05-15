@@ -2,8 +2,6 @@ name: Windows Release Build
 
 on:
   workflow_dispatch:
-  release:
-    types: [released]
 
 env:
   WIN_SCRIPT_ZIP_NAME: 'embykeeper-win-${{ github.ref_name }}.zip'
