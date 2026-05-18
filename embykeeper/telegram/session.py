@@ -105,7 +105,13 @@ class ClientsSession:
                 else:
                     logger.debug("未注册退出处理程序, 开始清理监听.")
                 await client.stop()
-                await client.storage.delete()
+                # 让出事件循环, 给 pyrogram 内部的 Session.restart 残留 task
+                # 一个机会在 storage 关闭前退出, 避免 ProgrammingError 刷屏.
+                await asyncio.sleep(0)
+                try:
+                    await client.storage.delete()
+                except Exception:
+                    pass
                 logger.debug(f'已停止账号 "{phone_masked}" 的监听和任务.')
 
     @classmethod

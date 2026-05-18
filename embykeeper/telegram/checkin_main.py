@@ -29,11 +29,35 @@ class CheckinerManager:
         self._tasks: Dict[str, asyncio.Task] = {}  # phone -> task
         self._site_tasks: Dict[str, Dict[str, asyncio.Task]] = {}  # phone -> site -> task
         self._schedulers: Dict[str, Scheduler] = {}  # phone -> scheduler
+        self._scheduler_tasks: Dict[str, asyncio.Task] = {}  # key -> running scheduler task
         self._pool = AsyncTaskPool()
 
         config.on_list_change("telegram.account", self._handle_account_change)
         config.on_change("checkiner", self._handle_config_change)
         config.on_change("site.checkiner", self._handle_config_change)
+
+    def _add_scheduler_task(self, key: str, scheduler: Scheduler) -> asyncio.Task:
+        if key in self._scheduler_tasks and not self._scheduler_tasks[key].done():
+            self._scheduler_tasks[key].cancel()
+        task = self._pool.add(scheduler.schedule(), name=f"scheduler:{key}")
+        self._scheduler_tasks[key] = task
+        return task
+
+    @staticmethod
+    def _last_success_key(phone: str, site_name: str) -> str:
+        return f"checkiner.last_success.{phone}.{site_name}"
+
+    def _is_already_done_today(self, phone: str, site_name: str) -> bool:
+        from embykeeper.cache import cache
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        return cache.get(self._last_success_key(phone, site_name)) == today
+
+    def _mark_done_today(self, phone: str, site_name: str) -> None:
+        from embykeeper.cache import cache
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        cache.set(self._last_success_key(phone, site_name), today)
 
     def _handle_config_change(self, *args):
         """Handle changes to the checkiner configuration"""
@@ -45,7 +69,7 @@ class CheckinerManager:
         for account in config.telegram.account:
             if account.enabled and account.checkiner:
                 scheduler = self.schedule_account(account)
-                self._pool.add(scheduler.schedule())
+                self._add_scheduler_task(account.phone, scheduler)
 
         logger.info("已根据新的配置重新安排所有签到任务.")
 
@@ -57,7 +81,7 @@ class CheckinerManager:
 
         for account in added:
             scheduler = self.schedule_account(account)
-            self._pool.add(scheduler.schedule())
+            self._add_scheduler_task(account.phone, scheduler)
             logger.info(f"新增的 {account.phone} 账号的计划任务已增加.")
 
     def stop_account(self, phone: str):
@@ -73,17 +97,19 @@ class CheckinerManager:
                 task.cancel()
             del self._site_tasks[phone]
 
-        # Cancel main account scheduler
+        # Cancel main account scheduler task and remove
+        if phone in self._scheduler_tasks:
+            self._scheduler_tasks[phone].cancel()
+            del self._scheduler_tasks[phone]
         if phone in self._schedulers:
             del self._schedulers[phone]
 
-        # Cancel all independent site schedulers for this account
-        keys_to_remove = []
-        for key in self._schedulers.keys():
-            if key.startswith(f"{phone}."):
-                keys_to_remove.append(key)
-
-        for key in keys_to_remove:
+        # Cancel all independent site scheduler tasks for this account
+        site_keys = [k for k in self._scheduler_tasks if k.startswith(f"{phone}.")]
+        for key in site_keys:
+            self._scheduler_tasks[key].cancel()
+            del self._scheduler_tasks[key]
+        for key in [k for k in self._schedulers if k.startswith(f"{phone}.")]:
             del self._schedulers[key]
 
     def _has_independent_time_range(self, site_name: str, config_to_use) -> bool:
@@ -150,7 +176,7 @@ class CheckinerManager:
         # Store scheduler with unique key
         scheduler_key = f"{account.phone}.{site_name}"
         self._schedulers[scheduler_key] = scheduler
-        self._pool.add(scheduler.schedule())
+        self._add_scheduler_task(scheduler_key, scheduler)
 
     def schedule_account(self, account: TelegramAccount):
         """Schedule checkins for an account"""
@@ -272,8 +298,10 @@ class CheckinerManager:
                 result = await c._start()
                 if result.status == RunStatus.SUCCESS:
                     log.info("重新签到成功.")
+                    self._mark_done_today(account.phone, site_name)
                 elif result.status == RunStatus.NONEED:
                     log.info("多次重新签到后依然为已签到状态, 已跳过.")
+                    self._mark_done_today(account.phone, site_name)
                 elif result.status == RunStatus.RESCHEDULE:
                     if c.ctx.next_time:
                         log.debug("继续等待重新签到.")
@@ -320,6 +348,11 @@ class CheckinerManager:
                 log.debug(f"跳过站点 {site_name}, 该站点有独立的 time_range 配置")
                 continue
 
+            # 幂等保护: 调度触发时若今日已成功签到则跳过（instant=True 时不跳过）
+            if not instant and self._is_already_done_today(account.phone, site_name):
+                log.debug(f"跳过站点 {site_name}, 今日已成功签到.")
+                continue
+
             site_ctx = RunContext.prepare(f"{site_name} 站点签到", parent_ids=ctx.id)
             checkiners.append(
                 cls(
@@ -354,8 +387,12 @@ class CheckinerManager:
                 ignored.append(c.name)
             elif result.status == RunStatus.SUCCESS:
                 successful.append(c.name)
+                done_site = c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                self._mark_done_today(account.phone, done_site)
             elif result.status == RunStatus.NONEED:
                 checked.append(c.name)
+                done_site = c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                self._mark_done_today(account.phone, done_site)
             elif result.status == RunStatus.RESCHEDULE:
                 if hasattr(c, "templ_name"):
                     site_name = c.templ_name
@@ -413,7 +450,7 @@ class CheckinerManager:
         for a in config.telegram.account:
             if a.enabled and a.checkiner:
                 scheduler = self.schedule_account(a)
-                self._pool.add(scheduler.schedule())
+                self._add_scheduler_task(a.phone, scheduler)
 
         if not self._schedulers:
             logger.info("没有需要执行的 Telegram 机器人签到任务")

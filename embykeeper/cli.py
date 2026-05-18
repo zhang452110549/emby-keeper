@@ -483,6 +483,17 @@ async def main(
 
         return await debug_notifier()
 
+    import sqlite3
+
+    def _silence_pyrogram_storage_race(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, sqlite3.ProgrammingError) and "closed database" in str(exc):
+            logger.debug(f"忽略 pyrogram 关闭时的 sqlite 残留异常: {exc}")
+            return
+        loop.default_exception_handler(context)
+
+    asyncio.get_event_loop().set_exception_handler(_silence_pyrogram_storage_race)
+
     try:
         checkin_man = None
         if checkiner:

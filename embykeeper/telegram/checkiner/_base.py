@@ -359,12 +359,12 @@ class BotCheckin(BaseBotCheckin):
                                 self.log.debug(f"[gray50]设为已读失败: {ident}[/]")
                             except FloodWait:
                                 self.log.debug(f"[gray50]设为已读因访问超限而失败: {ident}[/]")
+            except asyncio.TimeoutError:
+                pass
             except OSError as e:
                 self.log.warning(f'初始化错误: "{e}", 签到器将停止.')
                 show_exception(e)
                 return self.ctx.finish(RunStatus.FAIL, f"初始化错误: {e}")
-            except asyncio.TimeoutError:
-                pass
             finally:
                 if not self.chat_name:
                     if old_mute_until:
