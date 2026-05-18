@@ -387,19 +387,22 @@ class CheckinerManager:
                 ignored.append(c.name)
             elif result.status == RunStatus.SUCCESS:
                 successful.append(c.name)
-                done_site = c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                done_site = (
+                    c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                )
                 self._mark_done_today(account.phone, done_site)
             elif result.status == RunStatus.NONEED:
                 checked.append(c.name)
-                done_site = c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                done_site = (
+                    c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                )
                 self._mark_done_today(account.phone, done_site)
             elif result.status == RunStatus.RESCHEDULE:
-                if hasattr(c, "templ_name"):
-                    site_name = c.templ_name
-                else:
-                    site_name = cls.__module__.rsplit(".", 1)[-1]
+                reschedule_site = (
+                    c.templ_name if hasattr(c, "templ_name") else c.__class__.__module__.rsplit(".", 1)[-1]
+                )
                 if c.ctx.next_time:
-                    self.schedule_site(ctx, c.ctx.next_time, account, site_name, reschedule=True)
+                    self.schedule_site(ctx, c.ctx.next_time, account, reschedule_site, reschedule=True)
                 checked.append(c.name)
             else:
                 failed.append(c.name)
